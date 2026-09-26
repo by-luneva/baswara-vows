@@ -659,7 +659,7 @@
                 <div class="item-kartu-ucapan">
                     <div class="baris-nama-ucapan">
                         <span class="nama-pengirim">${escapeHTML(item.nama)}</span>
-                        <span class="badge-status ${item.status === 'Hadir' ? 'hadir' : 'tidak-hadir'}">${item.status}</span>
+                        <span class="badge-status ${item.status === 'Hadir' ? 'hadir' : 'tidak-hadir'}">${escapeHTML(item.status)}</span>
                     </div>
                     <div class="teks-pesan-ucapan">${escapeHTML(item.ucapan)}</div>
                 </div>
@@ -667,16 +667,36 @@
         }
 
         function muatDataUcapan() {
+            // 1. Ambil dari cache lokal terlebih dahulu agar langsung tampil saat dibuka kembali
             const cache = localStorage.getItem('deandra_bulan_ucapan_cache');
-            if (cache) { dataUcapan = JSON.parse(cache); renderUcapan(dataUcapan); }
+            if (cache) { 
+                try {
+                    const parsed = JSON.parse(cache);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                        dataUcapan = parsed; 
+                        renderUcapan(dataUcapan); 
+                    }
+                } catch(e) {} 
+            }
             
-            fetch(SCRIPT_URL)
+            // 2. Ambil data terbaru dari Google Sheets/Apps Script
+            fetch(SCRIPT_URL, { method: 'GET', redirect: 'follow' })
                 .then(r => r.json())
                 .then(data => {
+                    let items = [];
                     if (Array.isArray(data)) {
-                        dataUcapan = data;
-                        localStorage.setItem('deandra_bulan_ucapan_cache', JSON.stringify(data));
-                        renderUcapan(data);
+                        items = data;
+                    } else if (data && Array.isArray(data.data)) {
+                        items = data.data;
+                    } else if (data && Array.isArray(data.result)) {
+                        items = data.result;
+                    }
+
+                    // Hanya timpa cache jika server mengembalikan data yang valid/tidak kosong
+                    if (items.length > 0) {
+                        dataUcapan = items;
+                        localStorage.setItem('deandra_bulan_ucapan_cache', JSON.stringify(items));
+                        renderUcapan(items);
                     }
                 }).catch(() => {});
         }
@@ -693,6 +713,8 @@
             }
 
             tampilkanModal('sukses', 'Terima Kasih', 'Konfirmasi & doa restu Anda telah tersimpan.');
+            
+            // Tambahkan data ke list lokal & cache langsung (Optimistic Update)
             dataUcapan.push({ nama, status: status.value, ucapan });
             localStorage.setItem('deandra_bulan_ucapan_cache', JSON.stringify(dataUcapan));
             renderUcapan(dataUcapan);
@@ -700,7 +722,20 @@
             el('rsvp-ucapan').value = '';
             status.checked = false;
 
-            fetch(SCRIPT_URL, { method: 'POST', body: new FormData(dom.rsvpForm) }).catch(() => {});
+            // Kirim ke Google Sheets dengan mode no-cors
+            const formData = new URLSearchParams();
+            formData.append('nama', nama);
+            formData.append('status', status.value);
+            formData.append('kehadiran', status.value);
+            formData.append('ucapan', ucapan);
+
+            fetch(SCRIPT_URL, { 
+                method: 'POST', 
+                mode: 'no-cors',
+                body: formData 
+            }).then(() => {
+                setTimeout(muatDataUcapan, 1500);
+            }).catch(() => {});
         });
     </script>
 </body>
